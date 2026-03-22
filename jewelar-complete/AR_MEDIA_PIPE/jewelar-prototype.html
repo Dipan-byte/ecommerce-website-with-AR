@@ -1,0 +1,1225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JewelAR — Virtual Try-On</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --gold:       #C9A96E;
+  --gold-dim:   #8B6914;
+  --gold-light: #F0D080;
+  --bg:         #0C0C0E;
+  --bg2:        #141418;
+  --bg3:        #1C1C22;
+  --border:     rgba(201,169,110,0.18);
+  --text:       #E8E4DC;
+  --text-dim:   rgba(232,228,220,0.45);
+  --font-serif: 'Cormorant Garamond', serif;
+  --font-sans:  'DM Sans', sans-serif;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+}
+
+/* Subtle grain overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.6;
+}
+
+/* ── Header ─────────────────────────────────── */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 32px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(12,12,14,0.9);
+  backdrop-filter: blur(12px);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.logo {
+  font-family: var(--font-serif);
+  font-size: 22px;
+  font-weight: 400;
+  letter-spacing: 3px;
+  color: var(--gold);
+  text-transform: uppercase;
+}
+.logo em {
+  font-style: italic;
+  color: var(--text);
+}
+
+.header-tag {
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 4px 14px;
+}
+
+.status-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #444;
+  transition: background 0.4s;
+}
+.status-dot.live { background: #4ade80; box-shadow: 0 0 6px #4ade8088; animation: blink 2s ease-in-out infinite; }
+.status-dot.warn { background: #f59e0b; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+/* ── Layout ─────────────────────────────────── */
+.layout {
+  display: flex;
+  gap: 0;
+  flex: 1;
+  height: calc(100vh - 61px);
+  overflow: hidden;
+}
+
+/* ── Viewport ───────────────────────────────── */
+.viewport {
+  flex: 1;
+  position: relative;
+  background: #080810;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.viewport::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--border);
+  pointer-events: none;
+  z-index: 10;
+}
+
+#video {
+  /* Hidden — we draw its frames onto the canvas directly */
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 1px;
+  height: 1px;
+}
+
+#canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* No CSS mirror — mirroring is done programmatically so
+     landmark coordinates stay in sync with what's drawn */
+}
+
+.no-camera {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  z-index: 5;
+  pointer-events: none;
+}
+.no-camera .icon {
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.no-camera p {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-style: italic;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+}
+
+.overlay-info {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  z-index: 20;
+}
+.fps-tag {
+  background: rgba(0,0,0,0.65);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-family: 'DM Mono', monospace;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+}
+
+/* ── Sidebar ─────────────────────────────────── */
+.sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg2);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.sidebar::-webkit-scrollbar { display: none; }
+
+.section {
+  padding: 20px 20px 0;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 20px;
+}
+.section-title {
+  font-size: 9px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 14px;
+}
+
+/* Earring selector */
+.earring-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.earring-card {
+  background: var(--bg3);
+  border: 1px solid rgba(201,169,110,0.12);
+  border-radius: 10px;
+  padding: 14px 8px 10px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+.earring-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, transparent, rgba(201,169,110,0.06));
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.earring-card:hover { border-color: rgba(201,169,110,0.35); }
+.earring-card:hover::before { opacity: 1; }
+.earring-card.active {
+  border-color: var(--gold);
+  background: rgba(201,169,110,0.08);
+}
+.earring-card.active::before { opacity: 1; }
+.earring-icon {
+  display: block;
+  margin: 0 auto 8px;
+}
+.earring-label {
+  font-family: var(--font-serif);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  transition: color 0.2s;
+}
+.earring-card.active .earring-label { color: var(--gold); }
+
+/* Sliders */
+.control-row {
+  margin-bottom: 16px;
+}
+.control-row:last-child { margin-bottom: 0; }
+.control-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.control-value {
+  color: var(--gold);
+  font-size: 11px;
+  font-family: 'DM Mono', monospace;
+}
+input[type=range] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 2px;
+  background: rgba(201,169,110,0.2);
+  border-radius: 2px;
+  outline: none;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--gold);
+  cursor: pointer;
+  border: 2px solid var(--bg2);
+  transition: transform 0.15s;
+}
+input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.3); }
+
+/* Toggles */
+.toggle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.toggle-row:last-child { margin-bottom: 0; }
+.toggle-wrap {
+  position: relative;
+  width: 34px;
+  height: 18px;
+}
+.toggle-wrap input { opacity: 0; width: 0; height: 0; position: absolute; }
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  background: var(--bg3);
+  border: 1px solid rgba(201,169,110,0.25);
+  border-radius: 9px;
+  cursor: pointer;
+  transition: all 0.25s;
+}
+.toggle-track::after {
+  content: '';
+  position: absolute;
+  left: 2px; top: 2px;
+  width: 12px; height: 12px;
+  background: rgba(201,169,110,0.4);
+  border-radius: 50%;
+  transition: all 0.25s;
+}
+.toggle-wrap input:checked + .toggle-track {
+  background: rgba(201,169,110,0.15);
+  border-color: var(--gold);
+}
+.toggle-wrap input:checked + .toggle-track::after {
+  background: var(--gold);
+  transform: translateX(16px);
+}
+
+/* Gem color picker */
+.color-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.gem-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+.gem-btn::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  transition: border-color 0.2s;
+}
+.gem-btn.active::after { border-color: var(--gold); }
+
+/* Start button */
+.start-btn {
+  margin: 20px;
+  width: calc(100% - 40px);
+  padding: 14px;
+  background: linear-gradient(135deg, #C9A96E 0%, #A07840 100%);
+  border: none;
+  border-radius: 8px;
+  color: #0C0C0E;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.25s;
+  position: relative;
+  overflow: hidden;
+}
+.start-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255,255,255,0);
+  transition: background 0.25s;
+}
+.start-btn:hover::before { background: rgba(255,255,255,0.1); }
+.start-btn:active { transform: scale(0.98); }
+.start-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.footer-note {
+  padding: 0 20px 20px;
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.7;
+  letter-spacing: 0.3px;
+  opacity: 0.7;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo"><em>Jewel</em>AR</div>
+  <div class="header-tag">Virtual Try-On · Prototype v0.1</div>
+  <div class="status-pill">
+    <div class="status-dot" id="statusDot"></div>
+    <span id="statusText">Idle</span>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- ── Viewport ── -->
+  <div class="viewport">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+
+    <div class="no-camera" id="noCameraMsg">
+      <div class="icon">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+          <circle cx="14" cy="14" r="5" stroke="#C9A96E" stroke-width="1.5"/>
+          <path d="M4 10.5V9a2 2 0 012-2h2l1.5-2.5h9L20 7h2a2 2 0 012 2v10a2 2 0 01-2 2H6a2 2 0 01-2-2V10.5z" stroke="#C9A96E" stroke-width="1.5" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <p>Grant camera access to begin</p>
+    </div>
+
+    <div class="overlay-info">
+      <span class="fps-tag" id="fpsBadge">-- FPS</span>
+      <span class="fps-tag" id="landmarkBadge">0 LANDMARKS</span>
+    </div>
+  </div>
+
+  <!-- ── Sidebar ── -->
+  <div class="sidebar">
+
+    <!-- Earring style -->
+    <div class="section">
+      <div class="section-title">Collection</div>
+      <div class="earring-grid">
+
+        <div class="earring-card active" id="card-jhumka" onclick="selectEarring('jhumka')">
+          <svg class="earring-icon" width="36" height="44" viewBox="0 0 36 44">
+            <circle cx="18" cy="6" r="5" fill="#C9A96E" stroke="#8B6914" stroke-width="1"/>
+            <path d="M12 14 Q8 28 18 38 Q28 28 24 14Z" fill="#C9A96E" stroke="#8B6914" stroke-width="1"/>
+            <ellipse cx="18" cy="24" rx="7" ry="2" stroke="#8B6914" stroke-width="1" fill="none"/>
+            <circle cx="18" cy="27" r="3" fill="#C0392B"/>
+            <circle cx="10" cy="38" r="2.5" fill="#C9A96E"/>
+            <circle cx="18" cy="40" r="2.5" fill="#C0392B"/>
+            <circle cx="26" cy="38" r="2.5" fill="#C9A96E"/>
+          </svg>
+          <span class="earring-label">Jhumka</span>
+        </div>
+
+        <div class="earring-card" id="card-hoop" onclick="selectEarring('hoop')">
+          <svg class="earring-icon" width="36" height="44" viewBox="0 0 36 44">
+            <circle cx="18" cy="24" r="14" fill="none" stroke="#C9A96E" stroke-width="5"/>
+            <path d="M4 22 Q6 14 18 13" stroke="#F0D080" stroke-width="2" fill="none" stroke-linecap="round"/>
+          </svg>
+          <span class="earring-label">Hoop</span>
+        </div>
+
+        <div class="earring-card" id="card-drop" onclick="selectEarring('drop')">
+          <svg class="earring-icon" width="36" height="44" viewBox="0 0 36 44">
+            <circle cx="18" cy="5" r="4" fill="#F0D080" stroke="#8B6914" stroke-width="1"/>
+            <line x1="18" y1="9" x2="18" y2="14" stroke="#C9A96E" stroke-width="1.5"/>
+            <path d="M18 14 Q26 22 22 32 Q18 38 14 32 Q10 22 18 14Z" fill="#1A5FA8" stroke="#0D3D6B" stroke-width="1"/>
+            <path d="M14 22 L22 30" stroke="rgba(150,200,255,0.6)" stroke-width="2" stroke-linecap="round"/>
+            <ellipse cx="18" cy="13" rx="4" ry="2" fill="#C9A96E"/>
+          </svg>
+          <span class="earring-label">Drop</span>
+        </div>
+
+        <div class="earring-card" id="card-chandelier" onclick="selectEarring('chandelier')">
+          <svg class="earring-icon" width="36" height="44" viewBox="0 0 36 44">
+            <circle cx="18" cy="5" r="3.5" fill="#C9A96E" stroke="#8B6914" stroke-width="1"/>
+            <line x1="18" y1="8" x2="18" y2="14" stroke="#C9A96E" stroke-width="1.5"/>
+            <path d="M8 14 H28 L26 22 H10 Z" fill="#C9A96E" stroke="#8B6914" stroke-width="1"/>
+            <line x1="10" y1="22" x2="7" y2="36" stroke="#C9A96E" stroke-width="1.2"/>
+            <line x1="18" y1="22" x2="18" y2="38" stroke="#C9A96E" stroke-width="1.2"/>
+            <line x1="26" y1="22" x2="29" y2="36" stroke="#C9A96E" stroke-width="1.2"/>
+            <circle cx="7" cy="37" r="3" fill="#9B59B6"/>
+            <circle cx="18" cy="39" r="3" fill="#C0392B"/>
+            <circle cx="29" cy="37" r="3" fill="#1A5FA8"/>
+          </svg>
+          <span class="earring-label">Chandelier</span>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Appearance -->
+    <div class="section">
+      <div class="section-title">Appearance</div>
+      <div class="control-row">
+        <div class="control-label">
+          <span>Size</span>
+          <span class="control-value" id="sizeVal">1.0×</span>
+        </div>
+        <input type="range" id="sizeSlider" min="0.5" max="2.5" step="0.1" value="1.0"
+          oninput="earringSize=+this.value; document.getElementById('sizeVal').textContent=parseFloat(this.value).toFixed(1)+'×'">
+      </div>
+      <div class="control-row">
+        <div class="control-label">
+          <span>Physics swing</span>
+          <span class="control-value" id="physVal">1.0×</span>
+        </div>
+        <input type="range" id="physSlider" min="0" max="3" step="0.1" value="1.0"
+          oninput="physicsStrength=+this.value; document.getElementById('physVal').textContent=parseFloat(this.value).toFixed(1)+'×'">
+      </div>
+      <div class="control-row">
+        <div class="control-label">
+          <span>Y offset</span>
+          <span class="control-value" id="offsetVal">-8</span>
+        </div>
+        <input type="range" id="offsetSlider" min="-30" max="60" step="2" value="-8"
+          oninput="yOffset=+this.value; document.getElementById('offsetVal').textContent=(this.value>0?'+':'')+this.value">
+      </div>
+    </div>
+
+    <!-- Gem colour -->
+    <div class="section">
+      <div class="section-title">Gem Colour</div>
+      <div class="color-row">
+        <div class="gem-btn active" id="gem-ruby"       style="background:#C0392B" onclick="selectGem('ruby',      '#C0392B', '#8e1a0e')" title="Ruby"></div>
+        <div class="gem-btn"        id="gem-sapphire"   style="background:#1A5FA8" onclick="selectGem('sapphire',  '#1A5FA8', '#0d3d6b')" title="Sapphire"></div>
+        <div class="gem-btn"        id="gem-emerald"    style="background:#1E7A4A" onclick="selectGem('emerald',   '#1E7A4A', '#0d4a2a')" title="Emerald"></div>
+        <div class="gem-btn"        id="gem-amethyst"   style="background:#6C3483" onclick="selectGem('amethyst',  '#6C3483', '#411b52')" title="Amethyst"></div>
+        <div class="gem-btn"        id="gem-topaz"      style="background:#D4AC0D" onclick="selectGem('topaz',     '#D4AC0D', '#9a7a05')" title="Topaz"></div>
+        <div class="gem-btn"        id="gem-diamond"    style="background:#D5E8F5" onclick="selectGem('diamond',   '#D5E8F5', '#8ab0c8')" title="Diamond"></div>
+        <div class="gem-btn"        id="gem-onyx"       style="background:#222228" onclick="selectGem('onyx',      '#222228', '#111114')" title="Onyx"></div>
+        <div class="gem-btn"        id="gem-opal"       style="background:#D4E8D0" onclick="selectGem('opal',      '#D4E8D0', '#8ab88a')" title="Opal"></div>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div class="section">
+      <div class="section-title">Settings</div>
+      <div class="toggle-row">
+        <span>Physics enabled</span>
+        <label class="toggle-wrap">
+          <input type="checkbox" id="togglePhysics" checked onchange="physicsEnabled=this.checked">
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <span>Both ears</span>
+        <label class="toggle-wrap">
+          <input type="checkbox" id="toggleBoth" checked onchange="bothEars=this.checked">
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <span>Show anchor points</span>
+        <label class="toggle-wrap">
+          <input type="checkbox" id="toggleAnchors" onchange="showAnchors=this.checked">
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+    </div>
+
+    <button class="start-btn" id="startBtn" onclick="startAR()">
+      Start Camera
+    </button>
+
+    <p class="footer-note">
+      Powered by MediaPipe FaceMesh · 468 landmarks · runs fully in-browser.
+      No video data leaves your device.
+    </p>
+
+  </div><!-- /sidebar -->
+
+</div><!-- /layout -->
+
+<!-- MediaPipe CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/face_mesh.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
+
+<script>
+// ════════════════════════════════════════════════
+//  Canvas / Video refs
+// ════════════════════════════════════════════════
+const video  = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+
+// Latest landmarks from MediaPipe (updated async, read in RAF)
+let latestLandmarks = null;
+
+let earringStyle   = 'jhumka';
+let earringSize    = 1.0;
+let physicsStrength = 1.0;
+let physicsEnabled = true;
+let bothEars       = true;
+let showAnchors    = false;
+let yOffset        = -8; // Vertical nudge to better align with ears (can be adjusted by user)
+let gemColor       = '#C0392B';
+let gemColorDark   = '#8e1a0e';
+
+// ════════════════════════════════════════════════
+//  Ear anchor — uses face-oval silhouette landmarks
+//  that are at actual ear-lobe height, NOT cheekbone
+//
+//  MediaPipe face oval goes around the face like a clock.
+//  Key landmarks at EAR-LOBE level (verified from face mesh map):
+//    172 — camera-LEFT  side, lower jaw near earlobe  → user's RIGHT ear
+//    397 — camera-RIGHT side, lower jaw near earlobe  → user's LEFT ear
+//
+//  After mirror transform (x → 1-x):
+//    172 (low camera-x)  → high display-x = RIGHT of screen ✓
+//    397 (high camera-x) → low  display-x = LEFT  of screen ✓
+// ════════════════════════════════════════════════
+function computeEarAnchors(lms, W, H) {
+  // Use side-face edge points for horizontal placement and lobe points for vertical blend.
+  const lobeR = lms[172];
+  const lobeL = lms[397];
+  const edgeR = lms[234];
+  const edgeL = lms[454];
+
+  // Face width for dynamic nudge/scale. Fall back to lobe distance if edge points are unavailable.
+  const widthNorm = (edgeR && edgeL)
+    ? Math.abs(edgeR.x - edgeL.x)
+    : Math.abs(lobeR.x - lobeL.x);
+  const faceWidthPx = widthNorm * W;
+  const nudge = faceWidthPx * 0.02;
+
+  const earRX = (1 - edgeR.x) * W + nudge;
+  const earLX = (1 - edgeL.x) * W - nudge;
+
+  // Blend side-face and lobe Y so anchors stay near ear height even when turning.
+  const noseTipY = lms[1].y * H;
+  const blendYR = edgeR.y * H * 0.45 + lobeR.y * H * 0.45 + noseTipY * 0.10;
+  const blendYL = edgeL.y * H * 0.45 + lobeL.y * H * 0.45 + noseTipY * 0.10;
+  const earRY = Math.max(0, Math.min(H, blendYR + yOffset));
+  const earLY = Math.max(0, Math.min(H, blendYL + yOffset));
+
+  return {
+    right: { x: earRX, y: earRY },
+    left:  { x: earLX, y: earLY }
+  };
+}
+
+// ════════════════════════════════════════════════
+//  Pendulum Physics (per ear)
+// ════════════════════════════════════════════════
+class Pendulum {
+  constructor(segments = 3) {
+    this.n = segments;
+    this.angles  = new Float32Array(segments);
+    this.angVels = new Float32Array(segments);
+    this.prevX   = null;
+    this.prevY   = null;
+    this.smoothAccelX = 0;
+  }
+
+  reset() {
+    this.angles.fill(0);
+    this.angVels.fill(0);
+    this.smoothAccelX = 0;
+  }
+
+  update(ax, ay) {
+    if (this.prevX !== null) {
+      const rawDeltaX = ax - this.prevX;
+      this.smoothAccelX += (rawDeltaX - this.smoothAccelX) * 0.25;
+    }
+    this.prevX = ax;
+    this.prevY = ay;
+
+    const g        = 0.011;
+    const damping  = 0.87;
+    const segLen   = 20 * earringSize;
+    const extForce = physicsEnabled ? this.smoothAccelX * physicsStrength : 0;
+
+    for (let i = 0; i < this.n; i++) {
+      const a = i === 0
+        ? -(g * Math.sin(this.angles[i])) + extForce * 0.08 - damping * 0.06 * this.angVels[i]
+        : -(g * Math.sin(this.angles[i])) + extForce * (0.05 - i * 0.01) - damping * 0.06 * this.angVels[i];
+      this.angVels[i] = (this.angVels[i] + a) * damping;
+      this.angles[i]  = Math.max(-1.1, Math.min(1.1, this.angles[i] + this.angVels[i]));
+    }
+    this.smoothAccelX *= 0.78;
+  }
+
+  getChain(ax, ay) {
+    const pts = [{ x: ax, y: ay }];
+    const segLen = 20 * earringSize;
+    let cx = ax, cy = ay;
+    for (let i = 0; i < this.n; i++) {
+      cx += Math.sin(this.angles[i]) * segLen;
+      cy += Math.cos(this.angles[i]) * segLen;
+      pts.push({ x: cx, y: cy });
+    }
+    return pts;
+  }
+}
+
+const physL = new Pendulum(3);
+const physR = new Pendulum(3);
+
+// ════════════════════════════════════════════════
+//  Earring Renderers
+// ════════════════════════════════════════════════
+
+const GOLD      = '#C9A96E';
+const GOLD_DK   = '#7A5510';
+const GOLD_LT   = '#F0D080';
+
+function drawChain(pts) {
+  if (pts.length < 2) return;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.strokeStyle = GOLD;
+  ctx.lineWidth = 1.5 * earringSize;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  // Small link circles
+  for (let i = 1; i < pts.length - 1; i++) {
+    ctx.beginPath();
+    ctx.arc(pts[i].x, pts[i].y, 2 * earringSize, 0, Math.PI * 2);
+    ctx.fillStyle = GOLD_LT;
+    ctx.fill();
+  }
+}
+
+function drawStud(x, y, r = 5) {
+  const sr = r * earringSize;
+  ctx.beginPath();
+  ctx.arc(x, y, sr, 0, Math.PI * 2);
+  ctx.fillStyle = GOLD_LT;
+  ctx.fill();
+  ctx.strokeStyle = GOLD_DK;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x - sr * 0.3, y - sr * 0.3, sr * 0.35, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255,255,220,0.7)';
+  ctx.fill();
+}
+
+function drawGem(x, y, r) {
+  const gr = r * earringSize;
+  ctx.beginPath();
+  ctx.arc(x, y, gr, 0, Math.PI * 2);
+  ctx.fillStyle = gemColor;
+  ctx.fill();
+  ctx.strokeStyle = gemColorDark;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  // Shine
+  ctx.beginPath();
+  ctx.arc(x - gr * 0.3, y - gr * 0.3, gr * 0.35, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.fill();
+}
+
+// ── Jhumka (Indian bell earring) ────────────────
+function renderJhumka(ax, ay, phys) {
+  phys.update(ax, ay);
+  const pts  = phys.getChain(ax, ay);
+  const tip  = pts[pts.length - 1];
+  const s    = earringSize;
+  const r    = 15 * s;
+
+  drawChain(pts.slice(0, -1));
+  drawStud(ax, ay, 5);
+
+  // Bell orientation from last chain segment
+  let bellAngle = 0;
+  if (pts.length >= 2) {
+    const p1 = pts[pts.length - 2], p2 = pts[pts.length - 1];
+    bellAngle = Math.atan2(p2.x - p1.x, p2.y - p1.y);
+  }
+
+  ctx.save();
+  ctx.translate(tip.x, tip.y);
+  ctx.rotate(bellAngle);
+
+  // Bell body
+  ctx.beginPath();
+  ctx.moveTo(-r * 0.45, 0);
+  ctx.bezierCurveTo(-r * 0.85, r * 0.55, -r * 0.9, r * 1.0, 0, r * 1.25);
+  ctx.bezierCurveTo( r * 0.9,  r * 1.0,  r * 0.85, r * 0.55, r * 0.45, 0);
+  ctx.closePath();
+  ctx.fillStyle = GOLD;
+  ctx.fill();
+  ctx.strokeStyle = GOLD_DK;
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  // Decorative ring
+  ctx.beginPath();
+  ctx.ellipse(0, r * 0.5, r * 0.42, r * 0.1, 0, 0, Math.PI * 2);
+  ctx.strokeStyle = GOLD_DK;
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  // Central gem
+  drawGem(0, r * 0.72, 4.5);
+
+  // Filigree dots on bell surface
+  [[-r*0.25, r*0.3], [r*0.25, r*0.3], [-r*0.3, r*0.65], [r*0.3, r*0.65]].forEach(([dx, dy]) => {
+    ctx.beginPath();
+    ctx.arc(dx, dy, 1.5 * s, 0, Math.PI * 2);
+    ctx.fillStyle = GOLD_LT;
+    ctx.fill();
+  });
+
+  // Dangling fringe beads
+  const beadOffsets = [-0.55, -0.28, 0, 0.28, 0.55];
+  beadOffsets.forEach((t, i) => {
+    const bx = t * r * 0.8;
+    const by = r * 1.25;
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx + (t * 2 * s), by + 10 * s);
+    ctx.strokeStyle = GOLD;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(bx + t * 2 * s, by + 10 * s + 3 * s, 3 * s, 0, Math.PI * 2);
+    ctx.fillStyle = i === 2 ? gemColor : (i % 2 === 0 ? GOLD : GOLD_LT);
+    ctx.fill();
+    ctx.strokeStyle = GOLD_DK;
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+  });
+
+  ctx.restore();
+}
+
+// ── Hoop ─────────────────────────────────────────
+function renderHoop(ax, ay, phys) {
+  phys.update(ax, ay);
+  const pts   = phys.getChain(ax, ay);
+  const swing = pts.length >= 2 ? (pts[1].x - pts[0].x) * 0.5 : 0;
+  const s     = earringSize;
+  const r     = 22 * s;
+
+  drawStud(ax, ay, 4);
+
+  ctx.save();
+  ctx.translate(ax + swing, ay + r * 0.25);
+  ctx.rotate(swing * 0.025);
+
+  // Hoop body
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.strokeStyle = GOLD;
+  ctx.lineWidth = 5 * s;
+  ctx.stroke();
+
+  // Inner shadow for depth
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.strokeStyle = GOLD_DK;
+  ctx.lineWidth = 1.5 * s;
+  ctx.stroke();
+
+  // Shine arc
+  ctx.beginPath();
+  ctx.arc(0, 0, r, -0.6, 0.2);
+  ctx.strokeStyle = 'rgba(255,255,200,0.6)';
+  ctx.lineWidth = 2.5 * s;
+  ctx.stroke();
+
+  // Optional gem at bottom of hoop
+  ctx.beginPath();
+  ctx.arc(0, r, 4 * s, 0, Math.PI * 2);
+  ctx.fillStyle = gemColor;
+  ctx.fill();
+  ctx.strokeStyle = gemColorDark;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+// ── Drop (teardrop gem) ──────────────────────────
+function renderDrop(ax, ay, phys) {
+  phys.update(ax, ay);
+  const pts = phys.getChain(ax, ay);
+  const tip = pts[pts.length - 1];
+  const s   = earringSize;
+
+  drawChain(pts.slice(0, -1));
+  drawStud(ax, ay, 4.5);
+
+  let dropAngle = 0;
+  if (pts.length >= 2) {
+    const p1 = pts[pts.length - 2], p2 = pts[pts.length - 1];
+    dropAngle = Math.atan2(p2.x - p1.x, p2.y - p1.y);
+  }
+
+  ctx.save();
+  ctx.translate(tip.x, tip.y);
+  ctx.rotate(dropAngle);
+
+  const dh = 26 * s, dw = 13 * s;
+
+  // Gold cap
+  ctx.beginPath();
+  ctx.ellipse(0, -dh * 0.28, dw * 0.38, 4.5 * s, 0, 0, Math.PI * 2);
+  ctx.fillStyle = GOLD;
+  ctx.fill();
+  ctx.strokeStyle = GOLD_DK;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Teardrop gem
+  ctx.beginPath();
+  ctx.moveTo(0, -dh * 0.28);
+  ctx.bezierCurveTo( dw,      dh * 0.08,  dw * 0.82, dh * 0.7, 0, dh * 0.72);
+  ctx.bezierCurveTo(-dw * 0.82, dh * 0.7, -dw,      dh * 0.08, 0, -dh * 0.28);
+  ctx.fillStyle = gemColor;
+  ctx.fill();
+  ctx.strokeStyle = gemColorDark;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Facet highlights
+  ctx.beginPath();
+  ctx.moveTo(-dw * 0.18, -dh * 0.1);
+  ctx.lineTo( dw * 0.18,  dh * 0.25);
+  ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+  ctx.lineWidth = 3 * s;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(-dw * 0.3, dh * 0.1);
+  ctx.lineTo(-dw * 0.1, dh * 0.4);
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 1.5 * s;
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+// ── Chandelier ───────────────────────────────────
+function renderChandelier(ax, ay, phys) {
+  phys.update(ax, ay);
+  const pts   = phys.getChain(ax, ay);
+  const tip   = pts[pts.length - 1];
+  const s     = earringSize;
+  const swing = pts.length >= 2 ? pts[1].x - pts[0].x : 0;
+
+  drawStud(ax, ay, 4.5);
+
+  ctx.save();
+  ctx.translate(ax + swing * 0.35, ay + 10 * s);
+  ctx.rotate(swing * 0.02);
+
+  const bw = 22 * s, bh = 8 * s;
+
+  // Top bar
+  ctx.beginPath();
+  ctx.roundRect(-bw, 0, bw * 2, bh, 3);
+  ctx.fillStyle = GOLD;
+  ctx.fill();
+  ctx.strokeStyle = GOLD_DK;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Decoration dots on bar
+  [-bw*0.6, 0, bw*0.6].forEach(dx => {
+    ctx.beginPath();
+    ctx.arc(dx, bh / 2, 2.5 * s, 0, Math.PI * 2);
+    ctx.fillStyle = GOLD_LT;
+    ctx.fill();
+  });
+
+  // Hanging drops (3 pendulums from bar)
+  const dropPoints = [
+    { bx: -bw * 0.65, extra: 0 },
+    { bx: 0,           extra: 6 * s },
+    { bx:  bw * 0.65, extra: 0 }
+  ];
+
+  dropPoints.forEach(({ bx, extra }, i) => {
+    const pendAngle = phys.angles[0] * (1 - i * 0.2);
+    const wireLen   = (20 + extra) * s;
+    const ex        = Math.sin(pendAngle) * wireLen;
+    const ey        = Math.cos(pendAngle) * wireLen;
+
+    ctx.beginPath();
+    ctx.moveTo(bx, bh);
+    ctx.lineTo(bx + ex, bh + ey);
+    ctx.strokeStyle = GOLD;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    const gemColors = [gemColor, gemColor, gemColor];
+    const gr = (i === 1 ? 5 : 4) * s;
+    ctx.beginPath();
+    ctx.arc(bx + ex, bh + ey + gr, gr, 0, Math.PI * 2);
+    ctx.fillStyle = i === 1 ? gemColor : GOLD;
+    ctx.fill();
+    ctx.strokeStyle = i === 1 ? gemColorDark : GOLD_DK;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(bx + ex - gr*0.3, bh + ey + gr - gr*0.3, gr*0.3, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fill();
+  });
+
+  ctx.restore();
+}
+
+// ════════════════════════════════════════════════
+//  Dispatch
+// ════════════════════════════════════════════════
+function renderEarring(ax, ay, phys) {
+  if (earringStyle === 'jhumka')     renderJhumka(ax, ay, phys);
+  else if (earringStyle === 'hoop')  renderHoop(ax, ay, phys);
+  else if (earringStyle === 'drop')  renderDrop(ax, ay, phys);
+  else if (earringStyle === 'chandelier') renderChandelier(ax, ay, phys);
+}
+
+// ════════════════════════════════════════════════
+//  UI Helpers
+// ════════════════════════════════════════════════
+function selectEarring(style) {
+  earringStyle = style;
+  document.querySelectorAll('.earring-card').forEach(c => c.classList.remove('active'));
+  document.getElementById('card-' + style).classList.add('active');
+  physL.reset(); physR.reset();
+}
+
+function selectGem(name, color, dark) {
+  gemColor     = color;
+  gemColorDark = dark;
+  document.querySelectorAll('.gem-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('gem-' + name).classList.add('active');
+}
+
+function setStatus(text, state) {
+  document.getElementById('statusText').textContent = text;
+  const dot = document.getElementById('statusDot');
+  dot.className = 'status-dot';
+  if (state === 'live') dot.classList.add('live');
+  else if (state === 'warn') dot.classList.add('warn');
+}
+
+// ════════════════════════════════════════════════
+//  FPS Counter
+// ════════════════════════════════════════════════
+let frameCount = 0, lastFPSTime = performance.now();
+function tickFPS() {
+  frameCount++;
+  const now = performance.now();
+  if (now - lastFPSTime >= 600) {
+    const fps = Math.round(frameCount * 1000 / (now - lastFPSTime));
+    document.getElementById('fpsBadge').textContent = fps + ' FPS';
+    frameCount = 0; lastFPSTime = now;
+  }
+}
+
+// ════════════════════════════════════════════════
+//  Main render loop — runs via requestAnimationFrame
+//  Draws the video frame + earrings every frame.
+//  MediaPipe updates `latestLandmarks` asynchronously.
+// ════════════════════════════════════════════════
+let rafId = null;
+
+function renderLoop() {
+  rafId = requestAnimationFrame(renderLoop);
+
+  // Make canvas match video resolution exactly
+  if (video.readyState >= 2) {
+    if (canvas.width  !== video.videoWidth)  canvas.width  = video.videoWidth;
+    if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
+  }
+
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // ── Draw video mirrored ──
+  // Flip only the draw call; canvas coordinate space stays normal
+  // so landmark math (below) is straightforward: mirroredX = (1-lm.x)*W
+  if (video.readyState >= 2) {
+    ctx.save();
+    ctx.translate(W, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, W, H);
+    ctx.restore();
+  }
+
+  // ── Overlay earrings ──
+  if (!latestLandmarks) return;
+
+  const anchors = computeEarAnchors(latestLandmarks, W, H);
+
+  // Debug: red crosshairs on anchor points
+  if (showAnchors) {
+    [anchors.right, anchors.left].forEach(p => {
+      ctx.strokeStyle = 'rgba(255,40,40,0.9)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(p.x - 14, p.y); ctx.lineTo(p.x + 14, p.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(p.x, p.y - 14); ctx.lineTo(p.x, p.y + 14); ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,40,40,0.85)';
+      ctx.fill();
+    });
+  }
+
+  renderEarring(anchors.right.x, anchors.right.y, physR);
+  if (bothEars) renderEarring(anchors.left.x, anchors.left.y, physL);
+  tickFPS();
+}
+
+// ════════════════════════════════════════════════
+//  MediaPipe callback — just stores landmarks
+// ════════════════════════════════════════════════
+function onResults(results) {
+  if (!results.multiFaceLandmarks?.length) {
+    setStatus('No face detected', 'warn');
+    document.getElementById('landmarkBadge').textContent = '0 LANDMARKS';
+    latestLandmarks = null;
+    return;
+  }
+  setStatus('Tracking · Live', 'live');
+  latestLandmarks = results.multiFaceLandmarks[0];
+  document.getElementById('landmarkBadge').textContent = latestLandmarks.length + ' LANDMARKS';
+}
+
+function syncCanvasSize() {
+  if (video.videoWidth) {
+    canvas.width  = video.videoWidth;
+    canvas.height = video.videoHeight;
+  }
+}
+
+// ════════════════════════════════════════════════
+//  Start AR
+// ════════════════════════════════════════════════
+async function startAR() {
+  const btn = document.getElementById('startBtn');
+  btn.disabled = true;
+  btn.textContent = 'Initialising...';
+  setStatus('Loading MediaPipe...', '');
+
+  try {
+    const faceMesh = new FaceMesh({
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${f}`
+    });
+
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: false,
+      minDetectionConfidence: 0.55,
+      minTrackingConfidence: 0.55
+    });
+
+    faceMesh.onResults(onResults);
+
+    setStatus('Requesting camera...', '');
+
+    const camera = new Camera(video, {
+      onFrame: async () => {
+        await faceMesh.send({ image: video });
+      },
+      width: 1280,
+      height: 720,
+      facingMode: 'user'
+    });
+
+    await camera.start();
+
+    // Start the main render loop now that video is streaming
+    if (rafId) cancelAnimationFrame(rafId);
+    renderLoop();
+
+    document.getElementById('noCameraMsg').style.display = 'none';
+    btn.textContent = '● Live';
+    btn.style.background = 'linear-gradient(135deg, #2d8a4e 0%, #1a5a32 100%)';
+    btn.style.color = '#fff';
+    setStatus('Waiting for face...', '');
+
+  } catch (err) {
+    console.error('AR init error:', err);
+    btn.disabled = false;
+    btn.textContent = 'Retry';
+    setStatus('Camera error — check permissions', 'warn');
+  }
+}
+
+// ════════════════════════════════════════════════
+//  Boot
+// ════════════════════════════════════════════════
+window.addEventListener('load', () => {
+  const offsetSlider = document.getElementById('offsetSlider');
+  const offsetVal = document.getElementById('offsetVal');
+  if (offsetSlider && offsetVal) {
+    offsetSlider.value = String(yOffset);
+    offsetVal.textContent = (yOffset > 0 ? '+' : '') + yOffset;
+  }
+  setStatus('Ready', '');
+});
+</script>
+</body>
+</html>
